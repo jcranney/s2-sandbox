@@ -1,4 +1,10 @@
+use std::iter::Sum;
+
 use crate::graphics::{create_graphics, Graphics, Rc, Vertex};
+use rand::{
+    distr::{Distribution, StandardUniform},
+    RngExt,
+};
 use spade::{DelaunayTriangulation, Point2, Triangulation};
 use winit::{
     application::ApplicationHandler,
@@ -8,6 +14,8 @@ use winit::{
     window::{Window, WindowId},
 };
 
+const REPETITIONS: isize = 10;
+
 enum State {
     Ready(Graphics),
     Init(Option<EventLoopProxy<Graphics>>),
@@ -16,21 +24,21 @@ enum State {
 #[derive(Debug)]
 struct PhysicalVertex {
     pos: Vec2,
-    val: f32,
+    acc: Vec2,
 }
 
 impl PhysicalVertex {
     fn to_display_vertex(&self, aspect_ratio: f32) -> Vertex {
-        let PhysicalVertex { pos, val } = self;
+        let PhysicalVertex { pos, acc } = self;
         Vertex {
             position: [pos.x * aspect_ratio, pos.y],
-            color: *val,
+            color: acc.abs()*1e-5,
             tex_coords: [pos.x * aspect_ratio, pos.y],
         }
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Copy)]
 struct Vec2 {
     x: f32,
     y: f32,
@@ -42,7 +50,7 @@ impl Vec2 {
     }
 }
 
-impl std::ops::Add for &Vec2 {
+impl std::ops::Add for Vec2 {
     type Output = Vec2;
 
     fn add(self, rhs: Self) -> Self::Output {
@@ -53,7 +61,7 @@ impl std::ops::Add for &Vec2 {
     }
 }
 
-impl std::ops::Sub for &Vec2 {
+impl std::ops::Sub for Vec2 {
     type Output = Vec2;
 
     fn sub(self, rhs: Self) -> Self::Output {
@@ -64,7 +72,7 @@ impl std::ops::Sub for &Vec2 {
     }
 }
 
-impl std::ops::Div<f32> for &Vec2 {
+impl std::ops::Div<f32> for Vec2 {
     type Output = Vec2;
 
     fn div(self, rhs: f32) -> Self::Output {
@@ -74,7 +82,7 @@ impl std::ops::Div<f32> for &Vec2 {
         }
     }
 }
-impl std::ops::Mul<f32> for &Vec2 {
+impl std::ops::Mul<f32> for Vec2 {
     type Output = Vec2;
 
     fn mul(self, rhs: f32) -> Self::Output {
@@ -85,43 +93,66 @@ impl std::ops::Mul<f32> for &Vec2 {
     }
 }
 
-#[derive(Debug)]
-struct Mass {
-    mass: f32,
-    pos: Vec2,
+impl Sum for Vec2 {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        iter.reduce(|a,b| a + b).unwrap()
+    }
 }
 
-impl Default for Mass {
-    fn default() -> Self {
-        Self {
-            mass: 1.0,
-            pos: Vec2 { x: 0.3, y: 0.4 },
+impl rand::distr::Distribution<Vec2> for StandardUniform {
+    fn sample<R: rand::prelude::Rng + ?Sized>(&self, rng: &mut R) -> Vec2 {
+        Vec2 {
+            x: -1.0 + 2.0 * rng.random::<f32>(),
+            y: -1.0 + 2.0 * rng.random::<f32>(),
         }
     }
 }
 
-struct Force {
-    v: Vec2,
+#[derive(Debug, Clone)]
+struct Mass {
+    mass: f32,
+    pos: Vec2,
+    vel: Vec2,
 }
 
+
 impl Mass {
-    pub fn force(&self, other: &PhysicalVertex) -> Force {
-        let PhysicalVertex { pos: other_pos, .. } = other;
+    pub fn acc(&self, other_pos: &Vec2) -> Vec2 {
         let Mass {
             mass,
-            pos: mass_pos,
-        } = self;
-        let mut v = mass_pos - other_pos;
-        let magnitude = 1e-3 * mass / v.abs().powf(2.0);
-        v = &v * (magnitude / (v.abs() as f32));
-        Force { v }
+            pos: mass_pos, .. } = self;
+
+        let mut total = Vec2 { x: 0.0, y: 0.0 };
+        for x_wraps in -REPETITIONS..(REPETITIONS + 1) {
+            let mut offset = Vec2 {
+                x: 2.0 * x_wraps as f32,
+                y: 0.0,
+            };
+            for y_wraps in -REPETITIONS..(REPETITIONS + 1) {
+                offset.y = 2.0 * y_wraps as f32;
+                let local = *mass_pos + offset - *other_pos;
+                let magnitude = 1e-3 * mass / local.abs().powf(2.0);
+                total = total + local * (magnitude / (local.abs() as f32));
+            }
+        }
+        total
+    }
+}
+
+impl Distribution<Mass> for StandardUniform {
+    fn sample<R: rand::prelude::Rng + ?Sized>(&self, rng: &mut R) -> Mass {
+        Mass {
+            mass: 10f32.powf(4.0 * rng.random::<f32>()),
+            pos: rng.random(),
+            vel: rng.random::<Vec2>(),
+        }
     }
 }
 
 struct Physics {
     vertices: Vec<PhysicalVertex>,
     indices: Vec<u32>,
-    mass: Mass,
+    masses: Vec<Mass>,
 }
 
 impl Physics {
@@ -160,7 +191,7 @@ impl Physics {
                     x: vertex.position().x,
                     y: vertex.position().y,
                 },
-                val: rand::random(),
+                acc: Vec2 { x: 0.0, y: 0.0 },
             });
         }
         for face in triangulation.inner_faces() {
@@ -168,17 +199,35 @@ impl Physics {
                 indices.push(vertex.index() as u32);
             }
         }
+        let masses = vec![
+            rand::random(),
+            rand::random(),
+            rand::random(),
+            rand::random(),
+        ];
         Self {
             vertices,
             indices,
-            mass: Mass::default(),
+            masses,
         }
     }
     pub fn update(&mut self) {
-        let Physics { vertices, mass, .. } = self;
+        const DT: f32 = 1e-2;
+        let Physics {
+            vertices, masses, ..
+        } = self;
+
+        // update gravity field
         for vertex in vertices {
-            vertex.val = 0.0;
-            vertex.val = mass.force(vertex).v.abs();
+            vertex.acc = masses.iter().map(|m| m.acc(&vertex.pos)).sum();
+        }
+
+        // propagate particles
+        let old_masses = masses.clone();
+        for mass in masses.iter_mut() {
+            let acc: Vec2 = old_masses.iter().map(|m| m.acc(&mass.pos)).sum();
+            // mass.vel = mass.vel + acc * DT;
+            mass.pos = mass.pos + mass.vel * DT;
         }
     }
 
@@ -271,7 +320,9 @@ impl ApplicationHandler<Graphics> for App {
     ) {
         match event {
             WindowEvent::Resized(size) => self.resized(size),
-            WindowEvent::RedrawRequested => self.draw(),
+            WindowEvent::RedrawRequested => {
+                self.draw();
+            },
             WindowEvent::CloseRequested => event_loop.exit(),
             _ => {}
         }

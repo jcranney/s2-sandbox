@@ -48,14 +48,16 @@ pub async fn create_graphics(window: Rc<Window>, proxy: EventLoopProxy<Graphics>
 
     let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Vertex Buffer"),
-        contents: &[0; 100*size_of::<Vertex>()],
+        contents: &[0; 100 * size_of::<Vertex>()],
         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
     });
     let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Index Buffer"),
-        contents: &[0; 100*size_of::<u32>()],
+        contents: &[0; 100 * size_of::<u32>()],
         usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
     });
+    let cap = surface.get_capabilities(&adapter);
+    let surface_format = cap.formats[0];
 
     let gfx = Graphics {
         window: window.clone(),
@@ -68,6 +70,8 @@ pub async fn create_graphics(window: Rc<Window>, proxy: EventLoopProxy<Graphics>
         vertex_buffer,
         index_buffer,
         num_indices: 100,
+        surface_format,
+        size,
     };
 
     let _ = proxy.send_event(gfx);
@@ -114,6 +118,8 @@ pub struct Graphics {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     num_indices: u32,
+    surface_format: wgpu::TextureFormat,
+    size: winit::dpi::PhysicalSize<u32>,
 }
 
 impl Graphics {
@@ -128,6 +134,23 @@ impl Graphics {
         self.surface_config.width = new_size.width.max(1);
         self.surface_config.height = new_size.height.max(1);
         self.surface.configure(&self.device, &self.surface_config);
+        self.size = new_size;
+    }
+
+    fn configure_surface(&self) {
+        let surface_config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format: self.surface_format,
+            color_space: wgpu::SurfaceColorSpace::Auto,
+            // Request compatibility with the sRGB-format texture view we‘re going to create later.
+            view_formats: vec![self.surface_format.add_srgb_suffix()],
+            alpha_mode: wgpu::CompositeAlphaMode::Auto,
+            width: self.surface_config.width,
+            height: self.size.height,
+            desired_maximum_frame_latency: 2,
+            present_mode: wgpu::PresentMode::AutoVsync,
+        };
+        self.surface.configure(&self.device, &surface_config);
     }
 
     pub fn draw(&mut self) {
@@ -136,11 +159,11 @@ impl Graphics {
             wgpu::CurrentSurfaceTexture::Occluded | wgpu::CurrentSurfaceTexture::Timeout => return,
             wgpu::CurrentSurfaceTexture::Suboptimal(texture) => {
                 drop(texture);
-                // self.configure_surface();
+                self.configure_surface();
                 return;
             }
             wgpu::CurrentSurfaceTexture::Outdated => {
-                // self.configure_surface();
+                self.configure_surface();
                 return;
             }
             wgpu::CurrentSurfaceTexture::Validation => {
@@ -148,7 +171,7 @@ impl Graphics {
             }
             wgpu::CurrentSurfaceTexture::Lost => {
                 self.surface = self.instance.create_surface(self.window.clone()).unwrap();
-                // self.configure_surface();
+                self.configure_surface();
                 return;
             }
         };
