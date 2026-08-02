@@ -10,13 +10,16 @@ default = []
 webgl = ["wgpu/webgl"]
 
 [dependencies]
-winit = { version = "0.30.12" }
-env_logger = {version = "0.11.5"}
+winit = { version = "0.30.13" }
+env_logger = {version = "0.11.11"}
 log = { version = "0.4.22"}
-wgpu = { version = "27.0.1" }
-pollster = {version ="0.4.0"}
+wgpu = { version = "30.0.0" }
+pollster = {version ="1.0.1"}
+bytemuck = { version = "1.25.2", features = ["min_const_generics"] }
+spade = "2.15.1"
+rand = "0.10.2"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1.7"
-console_log = "1.0"
+console_log = "1.1.0"
 wasm-bindgen-futures = "0.4.49"
