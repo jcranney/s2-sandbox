@@ -48,6 +48,12 @@ impl Vec2 {
     fn abs(&self) -> f32 {
         self.x * self.x + self.y * self.y
     }
+    /// only use for position-like Vec2 objects. Wraps positions into the
+    /// [-1,1]^2 window
+    fn wrap(&mut self) {
+        self.x = self.x % 2.0;
+        self.y = self.y % 2.0;
+    }
 }
 
 impl std::ops::Add for Vec2 {
@@ -228,6 +234,7 @@ impl Physics {
             let acc: Vec2 = old_masses.iter().map(|m| m.acc(&mass.pos)).sum();
             // mass.vel = mass.vel + acc * DT;
             mass.pos = mass.pos + mass.vel * DT;
+            mass.pos.wrap();
         }
     }
 
@@ -248,8 +255,7 @@ impl App {
     pub fn new(event_loop: &EventLoop<Graphics>) -> Self {
         Self {
             state: State::Init(Some(event_loop.create_proxy())),
-            physics: Physics::rand(100),
-            // physics: Physics::triangle(),
+            physics: Physics::rand(20),
         }
     }
 
@@ -257,7 +263,6 @@ impl App {
         if let State::Ready(gfx) = &mut self.state {
             let size = gfx.size();
             let aspect_ratio = size.1 as f32 / size.0 as f32;
-            println!("{:?}", self.physics.vertices);
             self.physics.update();
             gfx.push_vertices(
                 self.physics.display_vertices(aspect_ratio),

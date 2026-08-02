@@ -69,7 +69,7 @@ pub async fn create_graphics(window: Rc<Window>, proxy: EventLoopProxy<Graphics>
         render_pipeline,
         vertex_buffer,
         index_buffer,
-        num_indices: 100,
+        num_indices: 1,
         surface_format,
         size,
     };
@@ -145,7 +145,7 @@ impl Graphics {
             // Request compatibility with the sRGB-format texture view we‘re going to create later.
             view_formats: vec![self.surface_format.add_srgb_suffix()],
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
-            width: self.surface_config.width,
+            width: self.size.width,
             height: self.size.height,
             desired_maximum_frame_latency: 2,
             present_mode: wgpu::PresentMode::AutoVsync,
@@ -204,7 +204,7 @@ impl Graphics {
             r_pass.draw_indexed(0..self.num_indices, 0, 0..1);
         } // `r_pass` dropped here
 
-        self.queue.submit(Some(encoder.finish()));
+        self.queue.submit([encoder.finish()]);
         self.queue.present(frame);
     }
 
