@@ -32,7 +32,7 @@ impl PhysicalVertex {
         let PhysicalVertex { pos, acc } = self;
         Vertex {
             position: [pos.x * aspect_ratio, pos.y],
-            color: acc.abs()*1e-5,
+            color: acc.abs() * 1e-5,
             tex_coords: [pos.x * aspect_ratio, pos.y],
         }
     }
@@ -101,7 +101,7 @@ impl std::ops::Mul<f32> for Vec2 {
 
 impl Sum for Vec2 {
     fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
-        iter.reduce(|a,b| a + b).unwrap()
+        iter.reduce(|a, b| a + b).unwrap()
     }
 }
 
@@ -121,12 +121,13 @@ struct Mass {
     vel: Vec2,
 }
 
-
 impl Mass {
     pub fn acc(&self, other_pos: &Vec2) -> Vec2 {
         let Mass {
             mass,
-            pos: mass_pos, .. } = self;
+            pos: mass_pos,
+            ..
+        } = self;
 
         let mut total = Vec2 { x: 0.0, y: 0.0 };
         for x_wraps in -REPETITIONS..(REPETITIONS + 1) {
@@ -137,7 +138,7 @@ impl Mass {
             for y_wraps in -REPETITIONS..(REPETITIONS + 1) {
                 offset.y = 2.0 * y_wraps as f32;
                 let local = *mass_pos + offset - *other_pos;
-                let magnitude = 1e-3 * mass / local.abs().powf(2.0);
+                let magnitude = 1e-4 * mass / (local.abs() + 1e-2).powf(2.0);
                 total = total + local * (magnitude / (local.abs() as f32));
             }
         }
@@ -150,7 +151,7 @@ impl Distribution<Mass> for StandardUniform {
         Mass {
             mass: 10f32.powf(4.0 * rng.random::<f32>()),
             pos: rng.random(),
-            vel: rng.random::<Vec2>(),
+            vel: rng.random::<Vec2>() * 10.0,
         }
     }
 }
@@ -205,12 +206,7 @@ impl Physics {
                 indices.push(vertex.index() as u32);
             }
         }
-        let masses = vec![
-            rand::random(),
-            rand::random(),
-            rand::random(),
-            rand::random(),
-        ];
+        let masses = vec![rand::random(), rand::random()];
         Self {
             vertices,
             indices,
@@ -218,7 +214,7 @@ impl Physics {
         }
     }
     pub fn update(&mut self) {
-        const DT: f32 = 1e-2;
+        const DT: f32 = 1e-3;
         let Physics {
             vertices, masses, ..
         } = self;
@@ -230,9 +226,15 @@ impl Physics {
 
         // propagate particles
         let old_masses = masses.clone();
-        for mass in masses.iter_mut() {
-            let acc: Vec2 = old_masses.iter().map(|m| m.acc(&mass.pos)).sum();
-            // mass.vel = mass.vel + acc * DT;
+        for (i, mass) in masses.iter_mut().enumerate() {
+            let acc: Vec2 = old_masses
+                .iter()
+                .enumerate()
+                .filter(|(j, _)| i != *j)
+                .map(|(_, m)| m.acc(&mass.pos))
+                .sum();
+            mass.vel = (mass.vel + acc * DT);
+            mass.vel = mass.vel * (1.0 - (mass.vel.abs() / 1e6).powf(2.0));
             mass.pos = mass.pos + mass.vel * DT;
             mass.pos.wrap();
         }
@@ -255,7 +257,7 @@ impl App {
     pub fn new(event_loop: &EventLoop<Graphics>) -> Self {
         Self {
             state: State::Init(Some(event_loop.create_proxy())),
-            physics: Physics::rand(20),
+            physics: Physics::rand(100),
         }
     }
 
@@ -327,7 +329,7 @@ impl ApplicationHandler<Graphics> for App {
             WindowEvent::Resized(size) => self.resized(size),
             WindowEvent::RedrawRequested => {
                 self.draw();
-            },
+            }
             WindowEvent::CloseRequested => event_loop.exit(),
             _ => {}
         }
