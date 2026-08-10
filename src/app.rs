@@ -14,7 +14,7 @@ use winit::{
     window::{Window, WindowId},
 };
 
-const REPETITIONS: isize = 10;
+const REPETITIONS: isize = 2;
 
 enum State {
     Ready(Graphics),
@@ -138,7 +138,7 @@ impl Mass {
             for y_wraps in -REPETITIONS..(REPETITIONS + 1) {
                 offset.y = 2.0 * y_wraps as f32;
                 let local = *mass_pos + offset - *other_pos;
-                let magnitude = 1e-4 * mass / (local.abs() + 1e-2).powf(2.0);
+                let magnitude = 1e-4 * mass / (local.abs()).powf(2.0);
                 total = total + local * (magnitude / (local.abs() as f32));
             }
         }
@@ -151,7 +151,7 @@ impl Distribution<Mass> for StandardUniform {
         Mass {
             mass: 10f32.powf(4.0 * rng.random::<f32>()),
             pos: rng.random(),
-            vel: rng.random::<Vec2>() * 10.0,
+            vel: rng.random::<Vec2>() * 1.0,
         }
     }
 }
@@ -206,7 +206,18 @@ impl Physics {
                 indices.push(vertex.index() as u32);
             }
         }
-        let masses = vec![rand::random(), rand::random()];
+        let masses = vec![
+            Mass {
+                mass: 1e1,
+                pos: Vec2 { x: 0.0, y: 0.0 },
+                vel: Vec2 { x: 0.0, y: 0.0 },
+            },
+            Mass {
+                mass: 1e-1,
+                pos: Vec2 { x: 0.0, y: 0.3 },
+                vel: Vec2 { x: 0.3545, y: 0.0 },
+            },
+        ];
         Self {
             vertices,
             indices,
@@ -214,10 +225,17 @@ impl Physics {
         }
     }
     pub fn update(&mut self) {
-        const DT: f32 = 1e-3;
+        const DT: f32 = 1e-2;
         let Physics {
             vertices, masses, ..
         } = self;
+
+        // re-centre universe by position of first mass?
+        let Mass { pos: p0, .. } = masses.first().unwrap().clone();
+
+        for mass in masses.iter_mut() {
+            mass.pos = mass.pos - p0;
+        }
 
         // update gravity field
         for vertex in vertices {
@@ -233,8 +251,7 @@ impl Physics {
                 .filter(|(j, _)| i != *j)
                 .map(|(_, m)| m.acc(&mass.pos))
                 .sum();
-            mass.vel = mass.vel + acc * DT ;
-            mass.vel = mass.vel * (1.0 - (mass.vel.abs() / 1e6).powf(2.0));
+            mass.vel = mass.vel + acc * DT;
             mass.pos = mass.pos + mass.vel * DT;
             mass.pos.wrap();
         }
@@ -257,7 +274,7 @@ impl App {
     pub fn new(event_loop: &EventLoop<Graphics>) -> Self {
         Self {
             state: State::Init(Some(event_loop.create_proxy())),
-            physics: Physics::rand(100),
+            physics: Physics::rand(200),
         }
     }
 

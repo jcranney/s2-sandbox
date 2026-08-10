@@ -16,7 +16,7 @@ fn vs_main(
 ) -> VertexOutput {
     var out: VertexOutput;
     out.uv = model.uv;
-    out.color = model.color;
+    out.color = model.color*1000.0;
     out.clip_position = vec4<f32>(model.position, 0.0, 1.0);
     return out;
 }
@@ -30,7 +30,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     if (col < 0.0) {
         col = 0.0;
     }
-    return vec4<f32>(inferno[u32(in.color*255)], 1);
+    return vec4<f32>(inferno[u32((in.color)*255)], 1);
 }
 
 
