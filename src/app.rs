@@ -150,7 +150,7 @@ impl Mass {
 impl Distribution<Mass> for StandardUniform {
     fn sample<R: rand::prelude::Rng + ?Sized>(&self, rng: &mut R) -> Mass {
         Mass {
-            mass: 10f32.powf(4.0 * rng.random::<f32>()),
+            mass: 10f32.powf(2.0 * rng.random::<f32>()),
             pos: rng.random(),
             vel: rng.random::<Vec2>() * 1.0,
         }
@@ -208,16 +208,11 @@ impl Physics {
             }
         }
         let masses = vec![
-            Mass {
-                mass: 1e1,
-                pos: Vec2 { x: 0.0, y: 0.0 },
-                vel: Vec2 { x: 0.0, y: 0.0 },
-            },
-            Mass {
-                mass: 1e-1,
-                pos: Vec2 { x: 0.0, y: 0.3 },
-                vel: Vec2 { x: 0.6, y: 0.0 },
-            },
+            rand::random(),
+            rand::random(),
+            rand::random(),
+            rand::random(),
+            rand::random(),
         ];
         Self {
             vertices,
