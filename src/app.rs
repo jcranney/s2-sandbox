@@ -32,7 +32,7 @@ impl PhysicalVertex {
         let PhysicalVertex { pos, acc } = self;
         Vertex {
             position: [pos.x * aspect_ratio, pos.y],
-            color: acc.abs() * 1e-5,
+            color: acc.abs() * 1e-2,
             tex_coords: [pos.x * aspect_ratio, pos.y],
         }
     }
@@ -46,7 +46,8 @@ struct Vec2 {
 
 impl Vec2 {
     fn abs(&self) -> f32 {
-        self.x * self.x + self.y * self.y
+        let Vec2 { x, y } = self;
+        (x.powf(2.0) + y.powf(2.0)).powf(0.5)
     }
     /// only use for position-like Vec2 objects. Wraps positions into the
     /// [-1,1]^2 window
@@ -138,7 +139,7 @@ impl Mass {
             for y_wraps in -REPETITIONS..(REPETITIONS + 1) {
                 offset.y = 2.0 * y_wraps as f32;
                 let local = *mass_pos + offset - *other_pos;
-                let magnitude = 1e-4 * mass / (local.abs()).powf(2.0);
+                let magnitude = 1e-2 * mass / (local.abs()).powf(2.0);
                 total = total + local * (magnitude / (local.abs() as f32));
             }
         }
@@ -215,7 +216,7 @@ impl Physics {
             Mass {
                 mass: 1e-1,
                 pos: Vec2 { x: 0.0, y: 0.3 },
-                vel: Vec2 { x: 0.3545, y: 0.0 },
+                vel: Vec2 { x: 0.6, y: 0.0 },
             },
         ];
         Self {
@@ -274,7 +275,7 @@ impl App {
     pub fn new(event_loop: &EventLoop<Graphics>) -> Self {
         Self {
             state: State::Init(Some(event_loop.create_proxy())),
-            physics: Physics::rand(200),
+            physics: Physics::rand(300),
         }
     }
 
