@@ -1,11 +1,12 @@
 use std::borrow::Cow;
 
 use wgpu::{
-    util::DeviceExt, Color, CommandEncoderDescriptor, Device, DeviceDescriptor, Features,
-    FragmentState, Instance, Limits, LoadOp, MemoryHints, Operations, Queue,
-    RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor,
-    RequestAdapterOptions, ShaderModuleDescriptor, ShaderSource, StoreOp, Surface,
-    SurfaceConfiguration, TextureFormat, TextureViewDescriptor, VertexState,
+    util::DeviceExt, Color, CommandEncoderDescriptor, CurrentSurfaceTexture, Device,
+    DeviceDescriptor, Features, FragmentState, InstanceDescriptor, Limits, LoadOp, MemoryHints,
+    Operations, PowerPreference, Queue, RenderPassColorAttachment, RenderPassDescriptor,
+    RenderPipeline, RenderPipelineDescriptor, RequestAdapterOptions, ShaderModuleDescriptor,
+    ShaderSource, StoreOp, Surface, SurfaceConfiguration, TextureFormat, TextureViewDescriptor,
+    VertexState,
 };
 use winit::{dpi::PhysicalSize, event_loop::EventLoopProxy, window::Window};
 
@@ -16,10 +17,24 @@ pub type Rc<T> = std::rc::Rc<T>;
 pub type Rc<T> = std::sync::Arc<T>;
 
 pub async fn create_graphics(window: Rc<Window>, proxy: EventLoopProxy<Graphics>) {
-    let instance = Instance::default();
+    // Not `Instance::default()`. On the web, wgpu decides whether to use WebGPU when the
+    // instance is created, and a plain `Instance::new` only checks that `navigator.gpu`
+    // exists. Browsers can expose that object yet still fail to produce any WebGPU
+    // adapter, in which case the instance is locked to WebGPU and never falls back to
+    // WebGL. This helper probes for a real adapter first and drops BROWSER_WEBGPU if
+    // there isn't one, so the `webgl` feature can actually take over.
+    let instance = wgpu::util::new_instance_with_webgpu_detection(
+        InstanceDescriptor::new_without_display_handle(),
+    )
+    .await;
     let surface = instance.create_surface(Rc::clone(&window)).unwrap();
     let adapter = instance
-        .request_adapter(&RequestAdapterOptions::default())
+        .request_adapter(&RequestAdapterOptions {
+            power_preference: PowerPreference::default(), // Power preference for the device
+            force_fallback_adapter: false, // Indicates that only a fallback ("software") adapter can be used
+            compatible_surface: Some(&surface), // Guarantee that the adapter can render to this surface
+            apply_limit_buckets: false, // Rounds limits into coarse buckets to reduce fingerprinting. Only useful when exposing wgpu to untrusted content.
+        })
         .await
         .expect("Could not get an adapter (GPU).");
 
@@ -40,7 +55,13 @@ pub async fn create_graphics(window: Rc<Window>, proxy: EventLoopProxy<Graphics>
     // Make the dimensions at least size 1, otherwise wgpu would panic
     let width = size.width.max(1);
     let height = size.height.max(1);
-    let surface_config = surface.get_default_config(&adapter, width, height).unwrap();
+    let mut surface_config = surface.get_default_config(&adapter, width, height).unwrap();
+
+    // `get_default_config` picks the first present mode the surface reports, which
+    // varies by platform and driver (often Mailbox, which renders uncapped). Pin Fifo
+    // so the render loop is vsync-limited everywhere. Swap to Mailbox or Immediate for
+    // uncapped frames.
+    surface_config.present_mode = wgpu::PresentMode::Fifo;
 
     surface.configure(&device, &surface_config);
 
@@ -56,12 +77,9 @@ pub async fn create_graphics(window: Rc<Window>, proxy: EventLoopProxy<Graphics>
         contents: &[0; 100 * size_of::<u32>()],
         usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
     });
-    let cap = surface.get_capabilities(&adapter);
-    let surface_format = cap.formats[0];
 
     let gfx = Graphics {
         window: window.clone(),
-        instance,
         surface,
         surface_config,
         device,
@@ -70,7 +88,6 @@ pub async fn create_graphics(window: Rc<Window>, proxy: EventLoopProxy<Graphics>
         vertex_buffer,
         index_buffer,
         num_indices: 1,
-        surface_format,
         size,
     };
 
@@ -109,7 +126,6 @@ fn create_pipeline(device: &Device, swap_chain_format: TextureFormat) -> RenderP
 #[derive(Debug)]
 pub struct Graphics {
     window: Rc<Window>,
-    instance: Instance,
     surface: Surface<'static>,
     surface_config: SurfaceConfiguration,
     device: Device,
@@ -118,7 +134,6 @@ pub struct Graphics {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     num_indices: u32,
-    surface_format: wgpu::TextureFormat,
     size: winit::dpi::PhysicalSize<u32>,
 }
 
@@ -137,44 +152,28 @@ impl Graphics {
         self.size = new_size;
     }
 
-    fn configure_surface(&self) {
-        let surface_config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: self.surface_format,
-            color_space: wgpu::SurfaceColorSpace::Auto,
-            // Request compatibility with the sRGB-format texture view we‘re going to create later.
-            view_formats: vec![self.surface_format.add_srgb_suffix()],
-            alpha_mode: wgpu::CompositeAlphaMode::Auto,
-            width: self.size.width,
-            height: self.size.height,
-            desired_maximum_frame_latency: 2,
-            present_mode: wgpu::PresentMode::AutoVsync,
-        };
-        self.surface.configure(&self.device, &surface_config);
-    }
-
     pub fn draw(&mut self) {
+        // `get_current_texture` reports why acquisition didn't yield a usable frame
+        // rather than collapsing it into one error, so each case is handled on its own.
         let frame = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(texture) => texture,
-            wgpu::CurrentSurfaceTexture::Occluded | wgpu::CurrentSurfaceTexture::Timeout => return,
-            wgpu::CurrentSurfaceTexture::Suboptimal(texture) => {
-                drop(texture);
-                self.configure_surface();
+            // Suboptimal still presents correctly, it just no longer matches the surface.
+            CurrentSurfaceTexture::Success(frame) | CurrentSurfaceTexture::Suboptimal(frame) => {
+                frame
+            }
+            // The surface configuration is stale. Reconfigure at the window's *current*
+            // size — reusing the stored config would keep the same stale dimensions and
+            // the surface would report Outdated forever, so no frame is ever acquired.
+            CurrentSurfaceTexture::Outdated | CurrentSurfaceTexture::Lost => {
+                let size = self.window.inner_size();
+                self.resize(size);
                 return;
             }
-            wgpu::CurrentSurfaceTexture::Outdated => {
-                self.configure_surface();
-                return;
-            }
-            wgpu::CurrentSurfaceTexture::Validation => {
-                unreachable!("No error scope registered, so validation errors will panic")
-            }
-            wgpu::CurrentSurfaceTexture::Lost => {
-                self.surface = self.instance.create_surface(self.window.clone()).unwrap();
-                self.configure_surface();
-                return;
-            }
+            // Transient, skip this frame and try again on the next one.
+            CurrentSurfaceTexture::Timeout
+            | CurrentSurfaceTexture::Occluded
+            | CurrentSurfaceTexture::Validation => return,
         };
+
         let view = frame.texture.create_view(&TextureViewDescriptor::default());
 
         let mut encoder = self
@@ -204,7 +203,7 @@ impl Graphics {
             r_pass.draw_indexed(0..self.num_indices, 0, 0..1);
         } // `r_pass` dropped here
 
-        self.queue.submit([encoder.finish()]);
+        self.queue.submit(Some(encoder.finish()));
         self.queue.present(frame);
     }
 

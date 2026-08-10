@@ -233,7 +233,7 @@ impl Physics {
                 .filter(|(j, _)| i != *j)
                 .map(|(_, m)| m.acc(&mass.pos))
                 .sum();
-            mass.vel = (mass.vel + acc * DT);
+            mass.vel = mass.vel + acc * DT ;
             mass.vel = mass.vel * (1.0 - (mass.vel.abs() / 1e6).powf(2.0));
             mass.pos = mass.pos + mass.vel * DT;
             mass.pos.wrap();
@@ -332,6 +332,17 @@ impl ApplicationHandler<Graphics> for App {
             }
             WindowEvent::CloseRequested => event_loop.exit(),
             _ => {}
+        }
+    }
+
+    // Emitted once all pending events have been processed, just before the loop waits
+    // again. ControlFlow::Poll keeps the loop spinning, but a frame is only drawn when
+    // something explicitly asks for one, so requesting the next redraw here is what
+    // turns that spinning into a continuous render loop. Without this, redraws only
+    // happen when the compositor asks for them (resize, focus, etc.).
+    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+        if let State::Ready(gfx) = &self.state {
+            gfx.request_redraw();
         }
     }
 }
